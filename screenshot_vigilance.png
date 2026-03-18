@@ -1,0 +1,33 @@
+---
+name: Bug report
+about: Signaler un problème avec le plugin
+title: '[BUG] '
+labels: bug
+assignees: ''
+---
+
+## Description du bug
+<!-- Description claire et concise du problème -->
+
+## Étapes pour reproduire
+1. Modèle sélectionné : ...
+2. Indicateur sélectionné : ...
+3. Action effectuée : ...
+4. Erreur obtenue : ...
+
+## Message d'erreur
+<!-- Coller ici le contenu de l'onglet Journal du plugin -->
+```
+```
+
+## Environnement
+- OS : [Windows / Linux / macOS]
+- Version QGIS : 
+- Version du plugin (metadata.txt) : 
+- Version meteole (`pip show meteole`) : 
+
+## Comportement attendu
+<!-- Ce qui devrait se passer -->
+
+## Captures d'écran
+<!-- Si applicable -->

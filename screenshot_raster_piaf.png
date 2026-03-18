@@ -1,0 +1,19 @@
+---
+name: Feature request
+about: Proposer une amélioration ou une nouvelle fonctionnalité
+title: '[FEATURE] '
+labels: enhancement
+assignees: ''
+---
+
+## Fonctionnalité souhaitée
+<!-- Description claire de ce que vous aimeriez voir ajouté -->
+
+## Cas d'usage
+<!-- Dans quel contexte cette fonctionnalité serait-elle utile ? -->
+
+## Solution envisagée
+<!-- Si vous avez une idée de mise en œuvre -->
+
+## Alternatives considérées
+<!-- Y a-t-il des solutions de contournement actuelles ? -->
