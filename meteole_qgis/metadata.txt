@@ -1,0 +1,29 @@
+[general]
+name=Meteole
+qgisMinimumVersion=3.16
+description=Génération de cartes météo depuis les données Météo-France (AROME, ARPEGE, PIAF) via la librairie meteole.
+version=1.1.0
+author=Plugin généré pour MAIF / Météo-France
+email=contact@example.com
+
+about=Ce plugin QGIS permet de récupérer et visualiser les données météorologiques de Météo-France directement dans QGIS. Il s'appuie sur la librairie Python "meteole" pour accéder aux modèles AROME, AROME Instantané, ARPEGE et PIAF.
+
+  Fonctionnalités :
+  - Connexion à l'API Météo-France via application_id
+  - Sélection du modèle météo (AROME, ARPEGE, PIAF, Vigilance)
+  - Sélection des indicateurs disponibles
+  - Définition de la zone géographique
+  - Import automatique en couches raster ou vecteur dans QGIS
+  - Visualisation des bulletins de vigilance
+
+tracker=https://github.com/MAIF/meteole/issues
+repository=https://github.com/MAIF/meteole
+
+hasProcessingProvider=no
+tags=météo,weather,météo-france,arome,arpege,forecast,raster,climate
+homepage=https://maif.github.io/meteole/home/
+category=Raster
+icon=icon.png
+experimental=False
+deprecated=False
+server=False
