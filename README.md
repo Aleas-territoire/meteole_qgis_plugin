@@ -29,7 +29,7 @@ Il s'appuie sur la librairie open source **meteole**, développée par la MAIF, 
 
 ### Pourquoi ce plugin ?
 
-Les modèles AROME (1,3 km de résolution) et ARPEGE fournissent la meilleure précision spatiale disponible pour la France métropolitaine — un ordre de grandeur supérieur aux APIs météo génériques (OpenWeather, etc.). Une fois chargées dans QGIS, ces données peuvent être **croisées avec n'importe quelle couche géographique** métier : portefeuilles de contrats, bâtiments, réseaux, parcelles agricoles, etc.
+Les modèles AROME (1,3 km de résolution) et ARPEGE fournissent la meilleure précision spatiale disponible pour la France métropolitaine, un ordre de grandeur supérieur aux APIs météo génériques (OpenWeather, etc.). Une fois chargées dans QGIS, ces données peuvent être **croisées avec n'importe quelle couche géographique** métier : portefeuilles de contrats, bâtiments, réseaux, parcelles agricoles, etc.
 
 ---
 
