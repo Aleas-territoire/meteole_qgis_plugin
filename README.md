@@ -259,4 +259,4 @@ Les données météorologiques sont fournies par **Météo-France** sous leurs c
 
 ## Auteurs
 
-Développé dans le cadre des projets data de la **MAIF**, en s'appuyant sur la librairie [meteole](https://github.com/MAIF/meteole).
+Développé par Josselin Thonnelier avec Claude Sonnet 4.6, appuyé sur la librairie [meteole](https://github.com/MAIF/meteole).
