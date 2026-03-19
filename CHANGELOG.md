@@ -2,6 +2,26 @@
 """
 Boîte de dialogue principale du plugin Meteole.
 
+## [1.2.0] — 2026
+
+### Ajouté
+- **Compatibilité QGIS 4.x** : migration des enums Qt5 vers Qt6 (fully-qualified)
+- `qgisMaximumVersion=4.99` dans metadata.txt
+
+### Modifié
+- `Qt.AlignCenter` → `Qt.AlignmentFlag.AlignCenter`
+- `Qt.PointingHandCursor` → `Qt.CursorShape.PointingHandCursor`
+- `Qt.Horizontal` → `Qt.Orientation.Horizontal`
+- `Qt.RichText` → `Qt.TextFormat.RichText`
+- `QLineEdit.Password` → `QLineEdit.EchoMode.Password`
+- `QgsRasterBandStats.All` → `QgsRasterBandStats.Stats.All`
+
+### Compatibilité
+- QGIS 3.16+ : ✅ maintenu
+- QGIS 4.x : ✅ ajouté
+
+---
+
 Améliorations v1.1 :
   - _on_forecast_done reçoit des file_info (fichiers prêts) et non des DataFrames
     → seul QgsProject.addMapLayer() tourne dans le thread principal
