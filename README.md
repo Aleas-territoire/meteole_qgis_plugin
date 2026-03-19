@@ -129,8 +129,8 @@ Copier le dossier `meteole_qgis/` dans votre répertoire de plugins QGIS :
 6. Cliquer **⬇ Charger la couche**
 
 Deux couches sont générées automatiquement :
-- `NOM_INDICATEUR [unité] (raster)` — GeoTIFF avec palette adaptée
-- `NOM_INDICATEUR [unité] (points)` — GeoPackage avec style gradué
+- `NOM_INDICATEUR [unité] (raster)` : GeoTIFF avec palette adaptée
+- `NOM_INDICATEUR [unité] (points)` : GeoPackage avec style gradué
 
 ### Charger plusieurs horizons temporels
 
@@ -138,7 +138,7 @@ Par défaut, seul le premier horizon disponible est téléchargé. Pour charger 
 
 1. Dans l'onglet **Prévisions**, décocher **"Automatique"** dans la section Horizons de prévision
 2. Saisir la plage souhaitée (ex. H+1 à H+6)
-3. Lancer le chargement — une couche raster est créée par horizon
+3. Lancer le chargement : une couche raster est créée par horizon
 4. L'onglet **Horizons** s'ouvre automatiquement avec le slider
 
 ### Charger la vigilance météo
@@ -229,7 +229,7 @@ Les fichiers GeoPackage sont écrits avec **sqlite3 pur** (sans QgsVectorFileWri
 
 ## Limitations connues
 
-- Les données sont des **prévisions récentes** uniquement — pas d'accès aux archives historiques
+- Les données sont des **prévisions récentes** uniquement : pas d'accès aux archives historiques
 - Chaque API (AROME, ARPEGE, AROME-PE…) requiert un **abonnement séparé** sur le portail Météo-France
 - Le **token expire après 1 heure** et doit être régénéré manuellement
 - AROME-PE (modèle d'ensemble) peut ne pas être accessible selon votre niveau d'abonnement
