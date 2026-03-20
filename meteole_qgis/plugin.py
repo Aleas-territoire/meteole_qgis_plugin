@@ -58,6 +58,80 @@ class MeteolePlugin:
             status_tip="Récupérer et visualiser des données météo Météo-France",
         )
 
+        # Installation automatique silencieuse de la dépendance au chargement
+        self._ensure_meteole_installed()
+
+    def _ensure_meteole_installed(self):
+        """Vérifie et installe silencieusement meteole si absent."""
+        try:
+            import meteole  # noqa: F401
+            return  # Déjà installé, rien à faire
+        except ImportError:
+            pass
+
+        import subprocess
+        import sys
+
+        python_exe = self._find_python_exe()
+
+        try:
+            result = subprocess.run(
+                [python_exe, "-m", "pip", "install", "meteole"],
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            if result.returncode != 0:
+                # Tentative avec --user si le premier essai échoue (droits insuffisants)
+                result = subprocess.run(
+                    [python_exe, "-m", "pip", "install", "--user", "meteole"],
+                    capture_output=True,
+                    text=True,
+                    timeout=120,
+                )
+            if result.returncode == 0:
+                QMessageBox.information(
+                    self.iface.mainWindow(),
+                    "Meteole – Installation réussie",
+                    "La librairie 'meteole' a été installée automatiquement.\n"
+                    "Veuillez redémarrer QGIS pour finaliser l'initialisation.",
+                )
+            else:
+                QMessageBox.warning(
+                    self.iface.mainWindow(),
+                    "Meteole – Échec de l'installation automatique",
+                    f"Impossible d'installer 'meteole' automatiquement.\n\n"
+                    f"Installez-la manuellement en ouvrant OSGeo4W Shell et en tapant :\n"
+                    f"    pip install meteole\n\n"
+                    f"Détail de l'erreur :\n{result.stderr[:500]}",
+                )
+        except Exception as e:
+            QMessageBox.critical(
+                self.iface.mainWindow(),
+                "Meteole – Erreur",
+                f"Erreur lors de l'installation automatique de 'meteole' :\n{str(e)}\n\n"
+                f"Installez-la manuellement via OSGeo4W Shell :\n    pip install meteole",
+            )
+
+    def _find_python_exe(self):
+        """Trouve le python.exe réel de l'environnement QGIS/OSGeo4W."""
+        import sys
+        import os
+
+        # Cas 1 : python.exe dans le même dossier que l'exécutable courant
+        candidate = os.path.join(os.path.dirname(sys.executable), "python.exe")
+        if os.path.isfile(candidate):
+            return candidate
+
+        # Cas 2 : parcourir sys.path pour trouver un python.exe valide
+        for path in sys.path:
+            candidate = os.path.join(path, "python.exe")
+            if os.path.isfile(candidate):
+                return candidate
+
+        # Cas 3 : fallback sur sys.executable (Linux/macOS ou cas edge)
+        return sys.executable
+
     def unload(self):
         """Supprime le plugin de l'interface QGIS."""
         for action in self.actions:
@@ -67,21 +141,18 @@ class MeteolePlugin:
 
     def run(self):
         """Ouvre la boîte de dialogue principale du plugin."""
-        # Vérifier que meteole est installé
+        # Vérifier que meteole est bien disponible (au cas où l'install aurait échoué)
         try:
             import meteole  # noqa: F401
         except ImportError:
-            reply = QMessageBox.question(
+            QMessageBox.warning(
                 self.iface.mainWindow(),
                 "Dépendance manquante",
-                "La librairie Python 'meteole' n'est pas installée.\n\n"
-                "Voulez-vous l'installer maintenant via pip ?",
-                QMessageBox.Yes | QMessageBox.No,
+                "La librairie 'meteole' n'est pas installée.\n\n"
+                "Installez-la via OSGeo4W Shell :\n    pip install meteole\n\n"
+                "Puis redémarrez QGIS.",
             )
-            if reply == QMessageBox.Yes:
-                self._install_meteole()
-            else:
-                return
+            return
 
         if self.dialog is None:
             self.dialog = MeteoleDialog(self.iface)
@@ -89,36 +160,3 @@ class MeteolePlugin:
         self.dialog.show()
         self.dialog.raise_()
         self.dialog.activateWindow()
-
-    def _install_meteole(self):
-        """Installe la librairie meteole via pip dans l'environnement QGIS."""
-        import subprocess
-        import sys
-
-        python_exe = sys.executable
-        try:
-            result = subprocess.run(
-                [python_exe, "-m", "pip", "install", "meteole"],
-                capture_output=True,
-                text=True,
-                timeout=120,
-            )
-            if result.returncode == 0:
-                QMessageBox.information(
-                    self.iface.mainWindow(),
-                    "Installation réussie",
-                    "La librairie 'meteole' a été installée avec succès.\n"
-                    "Veuillez relancer le plugin.",
-                )
-            else:
-                QMessageBox.critical(
-                    self.iface.mainWindow(),
-                    "Erreur d'installation",
-                    f"L'installation a échoué :\n{result.stderr}",
-                )
-        except Exception as e:
-            QMessageBox.critical(
-                self.iface.mainWindow(),
-                "Erreur",
-                f"Impossible d'installer meteole :\n{str(e)}",
-            )
