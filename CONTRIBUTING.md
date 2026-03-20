@@ -27,12 +27,19 @@ Merci de l'intérêt porté à ce plugin ! Ce document explique comment contribu
    ~/Library/Application Support/QGIS/QGIS3/profiles/default/python/plugins/
 ```
 
-2. Installez `meteole` dans l'interpréteur Python de QGIS :
-```
-   python -m pip install meteole==0.2.*
-```
+2. Lancez QGIS — la librairie `meteole` est installée automatiquement au 
+   premier chargement du plugin.
 
-3. Rechargez QGIS ou utilisez le plugin **Plugin Reloader** pour recharger sans redémarrer.
+   > ⚠️ Si l'installation automatique échoue (droits insuffisants, pas de 
+   > réseau), installez-la manuellement via OSGeo4W Shell :
+   > ```
+   > pip install meteole
+   > ```
+   > Consultez le **Journal des messages QGIS → onglet Meteole** pour le 
+   > diagnostic complet.
+
+3. Rechargez QGIS ou utilisez le plugin **Plugin Reloader** pour recharger 
+   sans redémarrer.
 
 ---
 
