@@ -42,7 +42,7 @@ Plugin QGIS pour accéder aux données météorologiques **Météo-France** dire
 | Nouvelle-Calédonie | `arome-nouvelle-caledonie` |
 | Polynésie | `arome-polynesie` |
 
-Chaque territoire outremer nécessite un **abonnement séparé** sur le portail MF.
+Tous les territoires outre-mer sont accessibles via **le package AROME outre-mer** sur le portail MF.
 
 ## Utilisation
 
