@@ -1,11 +1,11 @@
-# Meteole v2 — Plugin QGIS Météo-France
+# Meteole v2 - Plugin QGIS Météo-France
 
 [![QGIS](https://img.shields.io/badge/QGIS-3.16%2B-589632)](https://qgis.org)
 [![Version](https://img.shields.io/badge/version-1.4.0-blue)](CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-Accès direct aux données météorologiques **Météo-France** dans QGIS — modèles
-**AROME**, **ARPEGE**, **PIAF**, **AROME Outre-Mer** et **Vigilance** — via la
+Accès direct aux données météorologiques **Météo-France** dans QGIS ( modèles
+**AROME**, **ARPEGE**, **PIAF**, **AROME Outre-Mer** et **Vigilance** ) via la
 librairie Python [`meteole`](https://github.com/MAIF/meteole).
 
 > **v2** : variables traduites en français, listes recentrées sur l'essentiel,
