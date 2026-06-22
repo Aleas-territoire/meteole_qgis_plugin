@@ -1,0 +1,49 @@
+name: Release
+
+# Construit meteole_v2.zip et l'attache à la Release lorsqu'un tag v* est poussé.
+# Exemple :  git tag v1.4.0 && git push origin v1.4.0
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Vérifier la cohérence version / tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          META_VERSION="$(grep -E '^version=' meteole_v2/metadata.txt | cut -d= -f2 | tr -d '[:space:]')"
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          echo "metadata.txt = ${META_VERSION} | tag = ${TAG_VERSION}"
+          if [ "${META_VERSION}" != "${TAG_VERSION}" ]; then
+            echo "::warning::La version de metadata.txt (${META_VERSION}) diffère du tag (${TAG_VERSION})."
+          fi
+
+      - name: Construire l'archive
+        run: |
+          chmod +x build_zip.sh
+          ./build_zip.sh
+
+      - name: Publier l'archive sur la Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/meteole_v2.zip
+          generate_release_notes: true
+
+      - name: Artefact (build manuel)
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: meteole_v2
+          path: dist/meteole_v2.zip
