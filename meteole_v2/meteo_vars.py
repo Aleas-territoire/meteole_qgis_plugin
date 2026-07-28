@@ -202,6 +202,9 @@ _METRO_BASE_FR = {
     "TOTAL_WATER_PRECIPITATION":   "Précipitations liquides",
     "TOTAL_SNOW_PRECIPITATION":    "Précipitations neigeuses",
     "RAINFALL_RATE":               "Intensité des précipitations",
+    "TOTAL_PRECIPITATION_RATE":    "Intensité des précipitations",
+    "SOLID_PRECIPITATION":         "Précipitations solides",
+    "CONVECTIVE_PRECIPITATION":    "Précipitations convectives",
     "PRESSURE":                    "Pression",
     "TOTAL_CLOUD_COVER":           "Nébulosité totale",
     "LOW_CLOUD_COVER":             "Nébulosité basse",
@@ -275,6 +278,9 @@ METRO_KEEP_BASES = {
     "TOTAL_WATER_PRECIPITATION",
     "TOTAL_SNOW_PRECIPITATION",
     "RAINFALL_RATE",
+    "TOTAL_PRECIPITATION_RATE",   # PIAF / AROME-PI (intensité des précip.)
+    "SOLID_PRECIPITATION",        # AROME-PI (précipitations solides)
+    "CONVECTIVE_PRECIPITATION",   # ARPEGE (précip. convectives — orages)
     "PRESSURE",
     "TOTAL_CLOUD_COVER",
     "LOW_CLOUD_COVER",

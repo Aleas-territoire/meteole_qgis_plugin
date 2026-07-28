@@ -118,3 +118,30 @@
 ### Architecture
 - Nouveau module `vigilance_utils.py` (sans dépendance QGIS) : analyse de la
   carte de vigilance par département et par aléa.
+
+## [1.4.1] — 2026-07
+
+### Améliorations — Précipitations & pas de temps
+- **Sélection de la période de cumul** pour les variables cumulées, peuplée
+  dynamiquement depuis l'API, avec **défaut PT1H** (cumul horaire) au lieu du
+  cumul 24 h imposé. Résout l'impossibilité d'obtenir des échéances < 24 h.
+- **Menu déroulant des échéances** au pas de temps réel du modèle (15 min pour
+  AROME-PI, 5 min pour PIAF, horaire pour AROME/ARPEGE) ; multi-sélection.
+- Aide dynamique expliquant le lien période de cumul ↔ échéance.
+- Fenêtre de cumul inscrite dans le nom de couche (« … — cumul 1 h »).
+- Suppression de la saisie d'horizons en métropole (remplacée par le menu) ;
+  options avancées dépliées par défaut.
+
+### Corrections & robustesse
+- Chargement des couches par `coverage_id` (corrige « Indicateur invalide » sur
+  AROME-PI ; garantit la cohérence run/cumul/échéance).
+- Lecture des échéances sans re-télécharger le GetCapabilities (~1,7 Mo pour
+  AROME) → nettement plus rapide.
+- Cache de session des listings : rebasculer entre modèles est instantané.
+- Retry automatique si le GetCapabilities est tronqué (corrige le cas « une
+  seule variable affichée ») ; résultat partiel non mis en cache.
+- Variables PIAF/AROME-PI (intensité, précip. solides/convectives) désormais
+  incluses dans le filtre ; filet de sécurité si aucune variable « significative ».
+- Retour systématique au modèle AROME à l'ouverture / au retour à l'étape 1 ;
+  résolution de modèle robuste (AROME-PI / AROME-PE ne sont plus confondus).
+- Message explicite en cas d'erreur d'abonnement (900908).

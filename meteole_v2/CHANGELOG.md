@@ -118,3 +118,22 @@
 ### Architecture
 - Nouveau module `vigilance_utils.py` (sans dépendance QGIS) : analyse de la
   carte de vigilance par département et par aléa.
+
+## [1.4.1] — 2026-07
+
+### Améliorations — Précipitations & pas de temps
+- **Sélection de la période de cumul** pour les variables cumulées
+  (précipitations, neige…) : nouveau menu « Période de cumul » peuplé
+  dynamiquement depuis l'API (PT1H, PT3H, P1D…), avec **défaut PT1H** (cumul
+  horaire) au lieu du cumul 24 h imposé jusqu'ici. Résout l'impossibilité
+  d'obtenir des échéances < 24 h sur AROME.
+- **Menu déroulant des échéances** alimenté par les pas de temps réels du
+  coverage : pas horaire pour AROME/ARPEGE, **15 min pour AROME-PI**,
+  **5 min pour PIAF**. Multi-sélection (une couche par échéance).
+- La fenêtre de cumul est inscrite dans le nom de couche (« … — cumul 1 h »).
+
+### Technique
+- worker : nouvelle tâche `describe_coverage` (lecture des `forecast_horizons`
+  d'un coverage), passage explicite de `interval` et des échéances (en secondes)
+  à `get_coverage()`, helpers `_interval_to_fr` / `_seconds_to_fr`.
+- Le listing des capabilities renvoie désormais `intervals_by_indicator`.

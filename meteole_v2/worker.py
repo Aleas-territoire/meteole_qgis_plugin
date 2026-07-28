@@ -44,6 +44,53 @@ AROME_OM_TERRITORY = {
 AROME_METRO_TERRITORIES = {"FRANCE"}
 
 
+def _interval_to_fr(interval):
+    """
+    Convertit une durée ISO 8601 (PT1H, PT15M, PT5M, P1D, P2D…) en libellé
+    français lisible : « cumul 1 h », « cumul 15 min », « cumul 24 h », « cumul 2 j ».
+    Retourne '' si l'intervalle est vide/None (variable instantanée).
+    """
+    if not interval:
+        return ""
+    s = str(interval).strip().upper()
+    import re
+    m = re.match(r"^P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?$", s)
+    if not m:
+        return f"cumul {interval}"
+    days, hours, mins, secs = (int(x) if x else 0 for x in m.groups())
+    total_h = days * 24 + hours
+    if days and not (hours or mins or secs):
+        return f"cumul {days} j" if days > 1 else "cumul 24 h"
+    if mins and not (days or hours or secs):
+        return f"cumul {mins} min"
+    if hours and not (days or mins or secs):
+        return f"cumul {hours} h"
+    # Cas composés
+    parts = []
+    if total_h:
+        parts.append(f"{total_h} h")
+    if mins:
+        parts.append(f"{mins} min")
+    if secs:
+        parts.append(f"{secs} s")
+    return "cumul " + " ".join(parts) if parts else f"cumul {interval}"
+
+
+def _seconds_to_fr(seconds):
+    """Convertit un nombre de secondes en libellé d'échéance : '15 min', '1 h', '1 j 6 h'."""
+    seconds = int(seconds)
+    d, rem = divmod(seconds, 86400)
+    h, rem = divmod(rem, 3600)
+    m, _   = divmod(rem, 60)
+    parts = []
+    if d: parts.append(f"{d} j")
+    if h: parts.append(f"{h} h")
+    if m: parts.append(f"{m} min")
+    if not parts:
+        parts.append("0 h")  # échéance d'analyse (H+0)
+    return " ".join(parts)
+
+
 class MeteoleTask(QgsTask):
     task_finished = pyqtSignal(dict)
     task_error    = pyqtSignal(str)
@@ -67,6 +114,8 @@ class MeteoleTask(QgsTask):
             elif self.task_name == "forecast":
                 self._result = (self._get_forecast_om()
                                 if is_om else self._get_forecast())
+            elif self.task_name == "describe_coverage":
+                self._result = self._describe_coverage()
             elif self.task_name == "vigilance":
                 self._result = self._get_vigilance()
             elif self.task_name == "probe_urls":
@@ -313,12 +362,114 @@ class MeteoleTask(QgsTask):
         except Exception:
             self._diag_url = "(URL non déterminable)"
         df_cap = client.get_capabilities()
+
+        # Garde-fou anti-troncature : le GetCapabilities d'AROME pèse ~1,7 Mo ;
+        # un téléchargement interrompu produit un XML partiel → très peu de
+        # coverages parsés. Si le résultat semble tronqué, on réessaie avec un
+        # fetch neuf (en vidant le cache interne de meteole).
+        def _n_ind(df):
+            for c in ("indicator", "id", "coverage_id"):
+                if c in df.columns:
+                    return df[c].dropna().nunique()
+            return len(df)
+
+        attempts = 0
+        while _n_ind(df_cap) < 3 and attempts < 2:
+            attempts += 1
+            try:
+                client._capabilities = None   # force un nouveau téléchargement
+            except Exception:
+                pass
+            df_cap = client.get_capabilities()
+
+        # Cartographie indicateur -> périodes de cumul (intervalles) disponibles.
+        # Permet de peupler le menu « Période de cumul » sans nouvel appel API.
+        intervals_by_indicator = {}
+        # Cartographie (indicateur, intervalle) -> coverage_id du dernier run.
+        # Permet de lire les échéances SANS re-télécharger les capabilities
+        # (crucial pour AROME dont le GetCapabilities pèse ~1,7 Mo).
+        coverage_ids = {}
+        if {"indicator", "interval"}.issubset(df_cap.columns):
+            for ind, sub in df_cap.groupby("indicator"):
+                vals = sorted({str(v) for v in sub["interval"].dropna().unique()
+                               if str(v) != ""})
+                intervals_by_indicator[str(ind)] = vals
+            if "id" in df_cap.columns:
+                for (ind, iv), g in df_cap.groupby(["indicator", "interval"]):
+                    if "run" in g.columns:
+                        g = g.sort_values("run")
+                    cid = g["id"].iloc[-1]
+                    coverage_ids.setdefault(str(ind), {})[str(iv)] = str(cid)
+
         for col in ("indicator", "id", "coverage_id"):
             if col in df_cap.columns:
                 indicators = sorted(df_cap[col].dropna().unique().tolist())
                 if indicators:
-                    return {"indicators": indicators}
-        return {"indicators": sorted(df_cap.iloc[:, 0].dropna().unique().tolist())}
+                    return {"indicators": indicators,
+                            "intervals_by_indicator": intervals_by_indicator,
+                            "coverage_ids": coverage_ids}
+        return {"indicators": sorted(df_cap.iloc[:, 0].dropna().unique().tolist()),
+                "intervals_by_indicator": intervals_by_indicator,
+                "coverage_ids": coverage_ids}
+
+    def _describe_coverage(self):
+        """
+        Retourne les pas de temps réels (forecast_horizons) d'un coverage,
+        pour une variable + période de cumul donnée. Utilisé pour peupler
+        dynamiquement le menu déroulant des échéances.
+        Résultat : {"horizons_seconds": [int, ...], "interval": str, ...}
+
+        Si un `coverage_id` est fourni (obtenu lors du listing), on interroge
+        directement DescribeCoverage — SANS re-télécharger les capabilities
+        (indispensable pour AROME dont le GetCapabilities pèse ~1,7 Mo).
+        """
+        model       = self.kwargs["model"]
+        indicator   = self.kwargs.get("indicator")
+        interval    = self.kwargs.get("interval") or None
+        coverage_id = self.kwargs.get("coverage_id")
+        client      = self._make_client(model)
+
+        # --- Chemin rapide : coverage_id connu → pas de get_capabilities ---
+        if coverage_id:
+            horizons_seconds = []
+            try:
+                axis = client.get_coverage_description(coverage_id)
+                fh = axis.get("forecast_horizons", []) or []
+                horizons_seconds = sorted({int(td.total_seconds()) for td in fh})
+            except Exception:
+                horizons_seconds = []
+            return {"horizons_seconds": horizons_seconds, "interval": interval,
+                    "run": None, "indicator": indicator, "model": model}
+
+        # --- Repli : reconstruire via get_capabilities ---
+        df_cap = client.get_capabilities()
+        sub = df_cap[df_cap["indicator"] == indicator] if "indicator" in df_cap.columns else df_cap
+        if interval and "interval" in sub.columns:
+            # Filtre strict : si l'intervalle demandé n'existe pas, on renvoie
+            # vide (ne PAS retomber sur un autre cumul, ce qui donnerait de
+            # fausses échéances).
+            sub = sub[sub["interval"].astype(str) == str(interval)]
+        if sub.empty:
+            return {"horizons_seconds": [], "interval": interval, "run": None,
+                    "indicator": indicator, "model": model}
+
+        # Dernier run disponible pour ce coverage
+        run = None
+        if "run" in sub.columns:
+            run = sorted(sub["run"].dropna().unique().tolist())[-1]
+            sub = sub[sub["run"] == run]
+        cid = sub["id"].iloc[0] if "id" in sub.columns else None
+
+        horizons_seconds = []
+        try:
+            axis = client.get_coverage_description(cid)
+            fh = axis.get("forecast_horizons", []) or []
+            horizons_seconds = sorted({int(td.total_seconds()) for td in fh})
+        except Exception:
+            horizons_seconds = []
+
+        return {"horizons_seconds": horizons_seconds, "interval": interval,
+                "run": run, "indicator": indicator, "model": model}
 
     def _get_forecast(self):
         model            = self.kwargs.get("model")
@@ -332,23 +483,45 @@ class MeteoleTask(QgsTask):
         ensemble_numbers = self.kwargs.get("ensemble_numbers")
         clip_bbox        = self.kwargs.get("clip_bbox")
         clip_cutline     = self.kwargs.get("clip_cutline_path")
+        interval         = self.kwargs.get("interval") or None
+        # Échéances sélectionnées dans le menu déroulant, en secondes
+        horizon_seconds  = self.kwargs.get("horizon_seconds")
         # Libellé français pour le nom de couche (l'indicateur brut reste
         # utilisé pour l'appel API et la détection de type/unité).
         label            = self.kwargs.get("indicator_label") or indicator
+        # Fenêtre de cumul lisible ajoutée au nom de couche (ex. « cumul 1 h »)
+        cumul_label      = _interval_to_fr(interval)
+        if cumul_label:
+            label = f"{label} — {cumul_label}"
+
         client = self._make_client(model)
-        if model in ("arome_instantane", "piaf"):
-            horizons_td = [datetime.timedelta(minutes=h*60) for h in forecast_horizons]
+
+        coverage_id = self.kwargs.get("coverage_id")
+        # On privilégie l'appel par coverage_id (obtenu au listing) : il
+        # contourne la revalidation d'indicateur de meteole (qui échoue pour
+        # AROME-PI) et garantit d'utiliser exactement le coverage dont les
+        # échéances ont été affichées.
+        if coverage_id:
+            kw = dict(coverage_id=coverage_id)
         else:
-            horizons_td = [datetime.timedelta(hours=h) for h in forecast_horizons]
-        kw = dict(indicator=indicator)
-        if run:                              kw["run"]              = run
+            kw = dict(indicator=indicator)
+            if run:                          kw["run"]      = run
+            if interval:                     kw["interval"] = interval
         if lon:                              kw["long"]             = lon
         if lat:                              kw["lat"]              = lat
         if heights and len(heights)>0:       kw["heights"]          = heights
         if pressures and len(pressures)>0:   kw["pressures"]        = pressures
         if ensemble_numbers is not None:     kw["ensemble_numbers"] = ensemble_numbers
-        if forecast_horizons and self.kwargs.get("horizons_explicit"):
-            kw["forecast_horizons"] = horizons_td
+
+        # Priorité aux échéances (secondes) issues du menu déroulant ;
+        # sinon, repli sur l'ancienne saisie en heures.
+        if horizon_seconds:
+            kw["forecast_horizons"] = [datetime.timedelta(seconds=int(s))
+                                       for s in horizon_seconds]
+        elif forecast_horizons and self.kwargs.get("horizons_explicit"):
+            kw["forecast_horizons"] = [datetime.timedelta(hours=h)
+                                       for h in forecast_horizons]
+
         df = client.get_coverage(**kw)
         horizon_col = next(
             (c for c in df.columns

@@ -379,6 +379,13 @@ class MeteoleDialog(QDialog):
         # Id de la couche vectorielle servant de découpe géométrique (cutline),
         # ou None si l'on utilise une emprise rectangulaire (canevas / saisie).
         self._clip_layer_id     = None
+        # Cartographie indicateur -> périodes de cumul (menu « Période de cumul »)
+        self._intervals_by_indicator = {}
+        self._listed_model_key       = None
+        self._coverage_ids           = {}
+        # Cache de session des listings (model_key -> résultat), pour éviter
+        # de re-télécharger le GetCapabilities à chaque bascule de modèle.
+        self._caps_cache             = {}
 
         self.setWindowTitle("Meteole v2 – Données Météo-France")
         self.setMinimumWidth(820)
@@ -536,10 +543,27 @@ class MeteoleDialog(QDialog):
                 "padding:5px 14px;border-radius:4px;font-size:12px;}"
                 "QPushButton:hover{color:#2c5f8a;}")
 
+    def _reset_model_to_arome(self):
+        """Remet le sélecteur de modèle sur AROME (ligne 0)."""
+        lst = getattr(self, "_lst_model", None)
+        if lst is None or lst.count() == 0:
+            return
+        if lst.currentRow() != 0:
+            lst.setCurrentRow(0)   # déclenche _on_model_changed (nettoyage)
+
+    def showEvent(self, event):
+        """À chaque ouverture de la fenêtre, repartir sur AROME."""
+        super().showEvent(event)
+        self._reset_model_to_arome()
+
     def _goto_page(self, page):
         # Ne pas forcer setCurrentIndex(0) ici — cause réorganisation fenêtres Qt5
         if self.tabs.currentIndex() != 0:
             self.tabs.setCurrentIndex(0)
+        # Retour à l'étape 1 → toujours repartir sur AROME (évite de rester
+        # bloqué sur un modèle non abonné, ex. AROME-PE).
+        if page == self._PAGE_TYPE:
+            self._reset_model_to_arome()
         self._page_type.setVisible(page == self._PAGE_TYPE)
         self._page_variable.setVisible(page == self._PAGE_VARIABLE)
         self._page_options.setVisible(page == self._PAGE_OPTIONS)
@@ -726,6 +750,45 @@ class MeteoleDialog(QDialog):
             "QPushButton:hover{text-decoration:underline;}")
         btn_reload.clicked.connect(self._on_get_capabilities)
         metro_vl.addWidget(btn_reload)
+
+        # Sélection d'un indicateur → maj cumul + échéances
+        self._lst_indicator.itemSelectionChanged.connect(self._on_indicator_selected)
+
+        # ---- Période de cumul (variables cumulées uniquement) ----
+        self.lbl_interval = QLabel("Période de cumul :")
+        metro_vl.addWidget(self.lbl_interval)
+        self._lst_interval = QListWidget()
+        self._lst_interval.setMaximumHeight(64)
+        self._lst_interval.setSelectionMode(QListWidget.SingleSelection)
+        self._lst_interval.itemSelectionChanged.connect(self._on_interval_selected)
+        metro_vl.addWidget(self._lst_interval)
+        self.cb_interval = _ListAdapter(self._lst_interval)
+
+        # ---- Échéances : pas de temps réels du modèle/coverage ----
+        self.lbl_timestep = QLabel("Échéances (pas de temps) :")
+        metro_vl.addWidget(self.lbl_timestep)
+        self._lst_timestep = QListWidget()
+        self._lst_timestep.setMaximumHeight(120)
+        # Multi-sélection : une couche par échéance choisie
+        self._lst_timestep.setSelectionMode(QListWidget.ExtendedSelection)
+        metro_vl.addWidget(self._lst_timestep)
+        self._lbl_timestep_hint = QLabel(
+            "Ctrl+clic pour en choisir plusieurs. Aucune sélection = toutes les échéances.")
+        self._lbl_timestep_hint.setStyleSheet("font-size:10px;color:#888;")
+        metro_vl.addWidget(self._lbl_timestep_hint)
+
+        # Aide dynamique expliquant le lien cumul ↔ échéance
+        self._lbl_cumul_help = QLabel("")
+        self._lbl_cumul_help.setWordWrap(True)
+        self._lbl_cumul_help.setStyleSheet(
+            "font-size:11px;color:#1a4a6e;background:#eef4fb;"
+            "border:1px solid #c5d8ee;border-radius:4px;padding:6px 8px;")
+        self._lbl_cumul_help.setVisible(False)
+        metro_vl.addWidget(self._lbl_cumul_help)
+
+        # Masqués tant qu'aucun indicateur n'est choisi
+        self._set_interval_timestep_visible(False, False)
+
         vl.addWidget(self.grp_metro_var)
 
         # ---- Mode AROME-OM : grille + variable directe ----
@@ -806,9 +869,10 @@ class MeteoleDialog(QDialog):
             "border-radius:4px;padding:8px 12px;font-size:12px;color:#1a4a6e;")
         vl.addWidget(self.lbl_selection_summary)
 
-        # Horizons
-        grp_horiz = QGroupBox("Horizon de prévision")
-        horiz_vl = QVBoxLayout(grp_horiz)
+        # Horizons — réservé à l'Outre-Mer (la métropole choisit ses échéances
+        # via le menu déroulant de l'étape « Variable »).
+        self.grp_horiz = QGroupBox("Horizon de prévision (Outre-Mer)")
+        horiz_vl = QVBoxLayout(self.grp_horiz)
         horiz_vl.addWidget(QLabel(
             "Entrez les horizons souhaités (format HHH<b>H</b>, séparés par des virgules) :"))
         self.le_om_horizons = QLineEdit()
@@ -824,7 +888,8 @@ class MeteoleDialog(QDialog):
         self.horiz_manual_widget = self.le_om_horizons
         self.sp_h_from = _FixedSpinValue(1)
         self.sp_h_to   = _FixedSpinValue(24)
-        vl.addWidget(grp_horiz)
+        self.grp_horiz.setVisible(False)   # métropole par défaut → masqué
+        vl.addWidget(self.grp_horiz)
 
         # Run
         grp_run = QGroupBox("Run météo")
@@ -957,7 +1022,8 @@ class MeteoleDialog(QDialog):
         self.grp_ens.setVisible(False)
         adv_vl.addWidget(self.grp_ens)
 
-        self.adv_widget.setVisible(False)
+        self.adv_widget.setVisible(True)
+        self.btn_adv_toggle.setText("▾  Options avancées (zone, niveaux…)")
         vl.addWidget(self.adv_widget)
 
         vl.addStretch()
@@ -1363,7 +1429,7 @@ class MeteoleDialog(QDialog):
         self.grp_om.setVisible(is_om)
         self.grp_metro_var.setVisible(not is_om)
         try:
-            self.om_horizons_widget.setVisible(is_om)
+            self.grp_horiz.setVisible(is_om)
             self.om_run_widget.setVisible(is_om)
         except Exception:
             pass
@@ -1390,6 +1456,34 @@ class MeteoleDialog(QDialog):
     def _on_model_changed(self, text):
         self._update_om_mode()
         self.cb_indicator.clear()
+        # Les capabilities changent avec le modèle : on réinitialise les menus
+        self._intervals_by_indicator = {}
+        self._listed_model_key = None
+        self._coverage_ids = {}
+        if getattr(self, "_lst_interval", None) is not None:
+            self._lst_interval.clear()
+        if getattr(self, "_lst_timestep", None) is not None:
+            self._lst_timestep.clear()
+        self._set_interval_timestep_visible(False, False)
+        # Restauration instantanée depuis le cache de session (évite de
+        # re-télécharger le GetCapabilities si ce modèle a déjà été listé).
+        self._restore_caps_from_cache()
+
+    def _restore_caps_from_cache(self):
+        """Repeuple la liste des variables depuis le cache de session, sans réseau."""
+        if self._is_om_territory():
+            return
+        key = self._metro_model_key()
+        cached = (getattr(self, "_caps_cache", {}) or {}).get(key)
+        if not cached:
+            return
+        self._all_indicators = list(cached.get("indicators", []))
+        self._intervals_by_indicator = cached.get("intervals_by_indicator", {}) or {}
+        self._coverage_ids = cached.get("coverage_ids", {}) or {}
+        self._listed_model_key = key
+        n = self._populate_metro_indicators()
+        self._log(f"[INFO] {n} variables restaurées depuis le cache "
+                  f"(cliquez « Recharger » pour rafraîchir).")
 
     def _is_om_territory(self):
         code = self.cb_territory.currentData()
@@ -1781,6 +1875,14 @@ class MeteoleDialog(QDialog):
             "ensemble_numbers":  None,
             "clip_bbox":         self._current_clip_bbox(),
             "clip_cutline_path": self._current_cutline_path(),
+            # Période de cumul choisie (None pour les variables instantanées)
+            "interval":          self._selected_interval(),
+            # coverage_id exact (obtenu au listing) → appel API fiable
+            "coverage_id":       (getattr(self, "_coverage_ids", {}) or {})
+                                  .get(raw_ind or "", {})
+                                  .get(self._selected_interval() or ""),
+            # Échéances sélectionnées dans le menu (en secondes) ; None = toutes
+            "horizon_seconds":   self._selected_horizon_seconds(),
         }
 
         if not self.chk_auto_run.isChecked():
@@ -1893,13 +1995,42 @@ class MeteoleDialog(QDialog):
     def _on_capabilities_done(self, result):
         self._set_busy(False)
         self._all_indicators = list(result.get("indicators", []))
+        # Cartographie indicateur -> périodes de cumul (pour le menu dédié)
+        self._intervals_by_indicator = result.get("intervals_by_indicator", {}) or {}
+        # coverage_id par (indicateur, intervalle) : lecture rapide des échéances
+        self._coverage_ids = result.get("coverage_ids", {}) or {}
+        # Mémorise le modèle listé (nécessaire pour interroger les échéances)
+        self._listed_model_key = self._metro_model_key()
         model_text = self._listing_model_text or self.cb_model.currentText()
 
+        raw_count = len(self._all_indicators)
+        # Détection d'un GetCapabilities visiblement tronqué (téléchargement
+        # partiel) : très peu d'indicateurs pour un modèle métropole.
+        partial = raw_count < 3
+        # On ne met en cache QUE les listings crédibles (évite de figer un
+        # résultat partiel).
+        if not partial:
+            self._caps_cache[self._listed_model_key] = result
+
+        # Réinitialise les menus cumul/échéances (nouvel indicateur à choisir)
+        self._lst_interval.clear()
+        self._lst_timestep.clear()
+        self._set_interval_timestep_visible(False, False)
+
         n_shown = self._populate_metro_indicators()
-        total   = len(self._all_indicators)
+        total   = raw_count
         # Basculer vers la page Variable du wizard
         self._goto_page(self._PAGE_VARIABLE)
-        if n_shown < total:
+        if partial:
+            self._log(f"[ATTENTION] Seulement {raw_count} indicateur(s) reçu(s) "
+                      f"pour {model_text} — le téléchargement de la liste semble "
+                      f"incomplet (réseau ?). Cliquez « Recharger la liste des "
+                      f"indicateurs » pour réessayer.")
+        elif getattr(self, "_metro_filter_fellback", False):
+            self._log(f"[OK] {n_shown} indicateurs chargés pour {model_text} "
+                      f"(aucune variable « significative » pour ce modèle : "
+                      f"liste complète affichée).")
+        elif n_shown < total:
             self._log(f"[OK] {n_shown}/{total} indicateurs affichés pour "
                       f"{model_text} (filtre « variables significatives »). "
                       f"Cochez « Afficher toutes les variables » pour la liste complète.")
@@ -1918,6 +2049,14 @@ class MeteoleDialog(QDialog):
         show_all = (self.chk_show_all_vars.isChecked()
                     if getattr(self, "chk_show_all_vars", None) else False)
         inds = raw if show_all else filter_metro_indicators(raw)
+
+        # Filet de sécurité : si le filtre « significatif » ne laisse RIEN
+        # (ex. modèle PIAF, uniquement des variables d'intensité de précip.),
+        # on affiche la liste complète pour ne pas laisser l'utilisateur bloqué.
+        self._metro_filter_fellback = False
+        if not inds and raw:
+            inds = raw
+            self._metro_filter_fellback = True
 
         # (libellé français, nom brut), triés par libellé
         pairs = sorted(((translate_indicator_fr(r), r) for r in inds),
@@ -1938,6 +2077,186 @@ class MeteoleDialog(QDialog):
             self._populate_metro_indicators()
         if getattr(self, "cb_om_grid", None) and self.cb_om_grid.count() > 0:
             self._on_om_grid_changed(None)
+
+    # ------------------------------------------------------------------ #
+    #  Période de cumul + échéances (dynamiques, depuis l'API)
+    # ------------------------------------------------------------------ #
+
+    _METRO_MODEL_MAP = {
+        "AROME  (1,3 km — prévision à courte échéance)": "arome",
+        "AROME-PI  (1,3 km — prévision immédiate)":       "arome_instantane",
+        "AROME-PE  (2,8 km — ensemble 25 scénarios)":     "arome_pe",
+        "ARPEGE  (10 km — prévision globale)":             "arpege",
+        "PIAF  (1,3 km — prévision très courte)":          "piaf",
+    }
+
+    def _metro_model_key(self):
+        raw = self.cb_model.currentText()
+        # 1) correspondance exacte
+        if raw in self._METRO_MODEL_MAP:
+            return self._METRO_MODEL_MAP[raw]
+        # 2) repli par préfixe, en testant les plus LONGS d'abord pour éviter
+        #    que « AROME-PI »/« AROME-PE » soient captés par « AROME ».
+        for k, v in sorted(self._METRO_MODEL_MAP.items(),
+                           key=lambda kv: len(kv[0].split("  ")[0]),
+                           reverse=True):
+            if raw.startswith(k.split("  ")[0]):
+                return v
+        return "arome"
+
+    def _set_interval_timestep_visible(self, interval_visible, timestep_visible):
+        for w in (getattr(self, "lbl_interval", None),
+                  getattr(self, "_lst_interval", None)):
+            if w is not None:
+                w.setVisible(interval_visible)
+        for w in (getattr(self, "lbl_timestep", None),
+                  getattr(self, "_lst_timestep", None),
+                  getattr(self, "_lbl_timestep_hint", None)):
+            if w is not None:
+                w.setVisible(timestep_visible)
+        lbl = getattr(self, "_lbl_cumul_help", None)
+        if lbl is not None and not timestep_visible:
+            lbl.setVisible(False)
+
+    def _update_cumul_help(self):
+        """Met à jour l'aide expliquant le lien période de cumul ↔ échéance."""
+        lbl = getattr(self, "_lbl_cumul_help", None)
+        if lbl is None:
+            return
+        if not self.cb_indicator.currentData():
+            lbl.setVisible(False)
+            return
+        from .worker import _interval_to_fr
+        iv = self._selected_interval()
+        if iv:
+            dur = _interval_to_fr(iv).replace("cumul ", "")  # ex. « 1 h »
+            lbl.setText(
+                f"Période de cumul = largeur de la fenêtre ({dur}). "
+                f"Échéance = instant de <b>fin</b> de cette fenêtre.<br>"
+                f"Chaque couche additionne les précipitations sur {dur}, "
+                f"se terminant à l'échéance choisie (une fenêtre de {dur} "
+                f"ne peut pas se terminer avant {dur}).")
+        else:
+            lbl.setText(
+                "Valeur <b>instantanée</b> à l'échéance choisie "
+                "(pas de cumul pour cette variable).")
+        lbl.setVisible(True)
+
+    def _on_indicator_selected(self):
+        """Quand l'utilisateur choisit un indicateur : maj cumul + échéances."""
+        raw = self.cb_indicator.currentData()
+        if not raw:
+            self._set_interval_timestep_visible(False, False)
+            return
+
+        from .worker import _interval_to_fr
+        intervals = (getattr(self, "_intervals_by_indicator", {}) or {}).get(raw, [])
+
+        self._lst_interval.blockSignals(True)
+        self._lst_interval.clear()
+        if intervals:
+            # Ordre lisible : cumuls horaires courts d'abord
+            def _rank(iv):
+                order = {"PT5M": 0, "PT15M": 1, "PT30M": 2, "PT1H": 3, "PT3H": 4,
+                         "PT6H": 5, "PT9H": 6, "PT12H": 7, "P1D": 8, "P2D": 9}
+                return order.get(iv, 50)
+            for iv in sorted(intervals, key=_rank):
+                self._lst_interval.addItem(_interval_to_fr(iv) or iv)
+                self._lst_interval.item(self._lst_interval.count() - 1).setData(
+                    256, iv)  # Qt.UserRole = 256
+            # Défaut : PT1H si disponible, sinon le plus court
+            default_iv = "PT1H" if "PT1H" in intervals else \
+                sorted(intervals, key=_rank)[0]
+            for i in range(self._lst_interval.count()):
+                if self._lst_interval.item(i).data(256) == default_iv:
+                    self._lst_interval.setCurrentRow(i)
+                    break
+            self._set_interval_timestep_visible(True, True)
+        else:
+            # Variable instantanée : pas de cumul, mais échéances quand même
+            self._set_interval_timestep_visible(False, True)
+        self._lst_interval.blockSignals(False)
+
+        self._update_cumul_help()
+        self._fetch_horizons()
+
+    def _on_interval_selected(self):
+        """Changement de période de cumul → rafraîchir les échéances."""
+        self._update_cumul_help()
+        self._fetch_horizons()
+
+    def _selected_interval(self):
+        it = self._lst_interval.currentItem()
+        if it is None or not self._lst_interval.isVisible():
+            return None
+        return it.data(256)
+
+    def _selected_horizon_seconds(self):
+        """Liste des échéances sélectionnées (en secondes), ou None si aucune."""
+        lst = getattr(self, "_lst_timestep", None)
+        if lst is None or not lst.isVisible():
+            return None
+        secs = [it.data(256) for it in lst.selectedItems()
+                if it.data(256) is not None]
+        return secs or None
+
+    def _fetch_horizons(self):
+        """Interroge l'API pour les pas de temps réels du coverage sélectionné."""
+        raw = self.cb_indicator.currentData()
+        if not raw:
+            return
+        appid = self._get_appid()
+        if not appid:
+            return
+        model_key = getattr(self, "_listed_model_key", None) or self._metro_model_key()
+        interval  = self._selected_interval()
+        # coverage_id connu depuis le listing → lecture rapide (pas de
+        # re-téléchargement des capabilities, crucial pour AROME).
+        cid = (getattr(self, "_coverage_ids", {}) or {}).get(raw, {}).get(interval or "")
+        self._lst_timestep.clear()
+        self._lst_timestep.addItem("Chargement des échéances…")
+        self._lst_timestep.setEnabled(False)
+        task = MeteoleWorker(
+            appid, "describe_coverage",
+            auth_mode=self._auth_mode(),
+            model=model_key,
+            territory="FRANCE",
+            indicator=raw,
+            interval=interval,
+            coverage_id=cid,
+        )
+        # Connexion directe (hors routeur _current_task) pour éviter toute
+        # confusion si un autre chargement est lancé entre-temps.
+        self._describe_task = task
+        task.task_finished.connect(self._on_describe_done)
+        task.task_error.connect(
+            lambda msg: self._lst_timestep.clear() or
+            self._lst_timestep.addItem("(échéances indisponibles)"))
+        QgsApplication.taskManager().addTask(task)
+
+    def _on_describe_done(self, result):
+        from .worker import _seconds_to_fr
+        # Ignore les résultats obsolètes : une requête d'échéances plus ancienne
+        # (autre cumul/indicateur) peut arriver après la sélection courante.
+        cur_ind = self.cb_indicator.currentData()
+        cur_iv  = str(self._selected_interval() or "")
+        if (result.get("indicator") != cur_ind
+                or str(result.get("interval") or "") != cur_iv):
+            return
+        secs = result.get("horizons_seconds", []) or []
+        self._lst_timestep.clear()
+        self._lst_timestep.setEnabled(True)
+        if not secs:
+            self._lst_timestep.addItem("(aucune échéance pour ce cumul)")
+            self._lst_timestep.setEnabled(False)
+            return
+        for s in secs:
+            self._lst_timestep.addItem(_seconds_to_fr(s))
+            self._lst_timestep.item(self._lst_timestep.count() - 1).setData(256, int(s))
+        # Pré-sélectionne la première échéance (évite de tout charger par défaut)
+        self._lst_timestep.setCurrentRow(0)
+        self._log(f"[INFO] {len(secs)} échéances disponibles pour cette variable"
+                  f"{' (cumul ' + str(self._selected_interval()) + ')' if self._selected_interval() else ''}.")
 
     def _on_load(self):
         appid = self._get_appid()
@@ -2394,4 +2713,9 @@ class MeteoleDialog(QDialog):
     def _on_worker_error(self, msg):
         self._set_busy(False)
         self._log(f"[ERR] {msg}", switch_tab=True)
+        # Message plus explicite pour l'erreur d'abonnement Météo-France
+        if "900908" in str(msg) or "Accès refusé" in str(msg):
+            msg = (str(msg) + "\n\nCette application n'est pas abonnée à ce modèle. "
+                   "Ajoutez-le à votre application sur portail-api.meteofrance.fr "
+                   "(rubrique « Mes APIs »), ou choisissez un autre modèle.")
         QMessageBox.critical(self, "Erreur Meteole", msg)
