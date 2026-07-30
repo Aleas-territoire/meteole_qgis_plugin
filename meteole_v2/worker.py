@@ -365,16 +365,12 @@ class MeteoleTask(QgsTask):
 
         # Garde-fou anti-troncature : le GetCapabilities d'AROME pèse ~1,7 Mo ;
         # un téléchargement interrompu produit un XML partiel → très peu de
-        # coverages parsés. Si le résultat semble tronqué, on réessaie avec un
-        # fetch neuf (en vidant le cache interne de meteole).
-        def _n_ind(df):
-            for c in ("indicator", "id", "coverage_id"):
-                if c in df.columns:
-                    return df[c].dropna().nunique()
-            return len(df)
-
+        # LIGNES parsées. On se base sur le nombre de lignes brutes (et non le
+        # nombre d'indicateurs uniques) : PIAF n'a qu'UN indicateur mais
+        # plusieurs lignes (intervalles × runs), donc ce test ne se déclenche
+        # pas à tort pour PIAF. Une vraie troncature ne renvoie que 1-2 lignes.
         attempts = 0
-        while _n_ind(df_cap) < 3 and attempts < 2:
+        while len(df_cap) < 3 and attempts < 2:
             attempts += 1
             try:
                 client._capabilities = None   # force un nouveau téléchargement
@@ -471,6 +467,30 @@ class MeteoleTask(QgsTask):
         return {"horizons_seconds": horizons_seconds, "interval": interval,
                 "run": run, "indicator": indicator, "model": model}
 
+    def _resolve_latest_coverage_id(self, client, indicator, interval):
+        """
+        Re-résout le coverage_id du dernier run disponible pour un
+        indicateur + cumul donné (utilisé quand le run capté au listing a
+        expiré, cas fréquent pour PIAF/AROME-PI, actualisés toutes les 15 min).
+        Renvoie None si introuvable.
+        """
+        try:
+            client._capabilities = None      # force un nouveau GetCapabilities
+        except Exception:
+            pass
+        try:
+            df = client.get_capabilities()
+        except Exception:
+            return None
+        sub = df[df["indicator"] == indicator] if "indicator" in df.columns else df
+        if interval and "interval" in sub.columns:
+            sub = sub[sub["interval"].astype(str) == str(interval)]
+        if sub is None or sub.empty:
+            return None
+        if "run" in sub.columns:
+            sub = sub.sort_values("run")
+        return str(sub["id"].iloc[-1]) if "id" in sub.columns else None
+
     def _get_forecast(self):
         model            = self.kwargs.get("model")
         indicator        = self.kwargs.get("indicator")
@@ -501,12 +521,44 @@ class MeteoleTask(QgsTask):
         # contourne la revalidation d'indicateur de meteole (qui échoue pour
         # AROME-PI) et garantit d'utiliser exactement le coverage dont les
         # échéances ont été affichées.
+        axis = None
         if coverage_id:
+            # Le run peut avoir expiré entre le listing et le chargement
+            # (PIAF/AROME-PI se rafraîchissent toutes les 15 min). Si le
+            # coverage n'existe plus, on ré-résout le dernier run disponible
+            # pour cet indicateur + cumul.
+            try:
+                axis = client.get_coverage_description(coverage_id)
+            except Exception:
+                fresh = self._resolve_latest_coverage_id(client, indicator, interval)
+                if fresh and fresh != coverage_id:
+                    coverage_id = fresh
+                    try:
+                        axis = client.get_coverage_description(coverage_id)
+                    except Exception:
+                        axis = None
             kw = dict(coverage_id=coverage_id)
         else:
             kw = dict(indicator=indicator)
             if run:                          kw["run"]      = run
             if interval:                     kw["interval"] = interval
+
+        # Borne l'emprise demandée (canevas/couche) au domaine réel du modèle :
+        # une bbox qui déborde (ex. sud de 37,5°N pour AROME) ferait échouer
+        # meteole (« latitude out of bounds »). On rogne au lieu de planter.
+        if axis and (lon or lat):
+            try:
+                if lon and isinstance(lon, (tuple, list)):
+                    lo = (max(float(lon[0]), axis["min_longitude"]),
+                          min(float(lon[1]), axis["max_longitude"]))
+                    lon = lo if lo[0] < lo[1] else None
+                if lat and isinstance(lat, (tuple, list)):
+                    la = (max(float(lat[0]), axis["min_latitude"]),
+                          min(float(lat[1]), axis["max_latitude"]))
+                    lat = la if la[0] < la[1] else None
+            except Exception:
+                pass
+
         if lon:                              kw["long"]             = lon
         if lat:                              kw["lat"]              = lat
         if heights and len(heights)>0:       kw["heights"]          = heights
