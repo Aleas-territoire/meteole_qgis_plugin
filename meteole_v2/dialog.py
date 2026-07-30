@@ -505,11 +505,13 @@ class MeteoleDialog(QDialog):
 
         self._step_btns = []
         for i, (num, label) in enumerate([("1","Type & Territoire"),
-                                           ("2","Variable"),
+                                           ("2","Modèle & variable"),
                                            ("3","Options & Chargement")]):
             btn = QPushButton(f" {num}  {label}")
             btn.setStyleSheet(self._step_style(i == 0))
             btn.setFlat(True)
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.setToolTip("Cliquer pour revenir à cette étape")
             btn.clicked.connect(lambda _, p=i: self._goto_page(p))
             self._step_btns.append(btn)
             sl.addWidget(btn)
@@ -560,6 +562,10 @@ class MeteoleDialog(QDialog):
         # Ne pas forcer setCurrentIndex(0) ici — cause réorganisation fenêtres Qt5
         if self.tabs.currentIndex() != 0:
             self.tabs.setCurrentIndex(0)
+        # Le panneau « après chargement » ne réapparaît qu'après un chargement
+        # réussi : on le masque à chaque navigation.
+        if getattr(self, "grp_after_load", None) is not None:
+            self.grp_after_load.setVisible(False)
         # Retour à l'étape 1 → toujours repartir sur AROME (évite de rester
         # bloqué sur un modèle non abonné, ex. AROME-PE).
         if page == self._PAGE_TYPE:
@@ -1054,6 +1060,40 @@ class MeteoleDialog(QDialog):
         self.btn_load.clicked.connect(self._on_load)
         nav.addWidget(self.btn_load)
         vl.addLayout(nav)
+
+        # Panneau « après chargement » : repères d'action clairs une fois la
+        # (les) couche(s) ajoutée(s). Masqué tant qu'aucun chargement réussi.
+        self.grp_after_load = QFrame()
+        self.grp_after_load.setStyleSheet(
+            "QFrame{background:#eef6ee;border:1px solid #c5e0c5;border-radius:6px;}")
+        al = QHBoxLayout(self.grp_after_load)
+        al.setContentsMargins(12, 8, 12, 8)
+        lbl_ok = QLabel("✓ Couche(s) ajoutée(s). Et ensuite ?")
+        lbl_ok.setStyleSheet(
+            "border:none;background:transparent;font-size:12px;color:#2e6b2e;")
+        al.addWidget(lbl_ok)
+        al.addStretch()
+        btn_change_var = QPushButton("↩  Modèle / variable")
+        btn_change_var.setToolTip(
+            "Revenir au choix du modèle et de la variable (étape 2)")
+        btn_change_var.setStyleSheet(
+            "QPushButton{background:#4a8a4a;color:white;border:none;"
+            "padding:7px 12px;border-radius:5px;font-size:12px;}"
+            "QPushButton:hover{background:#2e6b2e;}")
+        btn_change_var.clicked.connect(
+            lambda: self._goto_page(self._PAGE_VARIABLE))
+        al.addWidget(btn_change_var)
+        btn_restart = QPushButton("🆕  Recommencer")
+        btn_restart.setToolTip(
+            "Repartir du choix du type et du territoire (étape 1)")
+        btn_restart.setStyleSheet(
+            "QPushButton{background:#8a6d3b;color:white;border:none;"
+            "padding:7px 12px;border-radius:5px;font-size:12px;}"
+            "QPushButton:hover{background:#6b5230;}")
+        btn_restart.clicked.connect(lambda: self._goto_page(self._PAGE_TYPE))
+        al.addWidget(btn_restart)
+        self.grp_after_load.setVisible(False)
+        vl.addWidget(self.grp_after_load)
 
         # Option couche points — sur ligne séparée pour ne pas élargir la fenêtre
         self.chk_load_points = QCheckBox(
@@ -1913,8 +1953,17 @@ class MeteoleDialog(QDialog):
             except ValueError:
                 pass
 
-        if self.sp_ensemble.isEnabled():
-            params["ensemble_numbers"] = range(int(self.sp_ensemble.text() or 3))
+        # ensemble_numbers UNIQUEMENT pour AROME-PE (modèle ENSEMBLE).
+        # Les modèles déterministes (AROME, AROME-PI, ARPEGE, PIAF) ne doivent
+        # jamais recevoir ce paramètre, sous peine de données dupliquées ou
+        # d'erreur de fusion côté meteole.
+        if self._metro_model_key() == "arome_pe":
+            try:
+                n = int(self.sp_ensemble.text() or 3)
+            except ValueError:
+                n = 3
+            n = max(1, min(n, 25))          # borne de sécurité (25 membres max)
+            params["ensemble_numbers"] = range(n)
 
         return params
 
@@ -2004,9 +2053,10 @@ class MeteoleDialog(QDialog):
         model_text = self._listing_model_text or self.cb_model.currentText()
 
         raw_count = len(self._all_indicators)
-        # Détection d'un GetCapabilities visiblement tronqué (téléchargement
-        # partiel) : très peu d'indicateurs pour un modèle métropole.
-        partial = raw_count < 3
+        # Le worker gère déjà la troncature (retry). Ici on ne considère
+        # « partiel » qu'un résultat réellement vide : certains modèles ont
+        # légitimement peu de variables (PIAF n'en a qu'une).
+        partial = raw_count == 0
         # On ne met en cache QUE les listings crédibles (évite de figer un
         # résultat partiel).
         if not partial:
@@ -2066,7 +2116,19 @@ class MeteoleDialog(QDialog):
         self.cb_indicator.clear()
         for label, r in pairs:
             self.cb_indicator.addItem(label, r)
+        # IMPORTANT : addItem auto-sélectionne la 1re ligne, mais avec les
+        # signaux bloqués le handler ne se déclenche pas → les menus
+        # cumul/échéances resteraient désynchronisés. On force donc « aucune
+        # sélection » : l'utilisateur choisit explicitement, ce qui déclenche
+        # proprement la synchronisation des menus.
+        self._lst_indicator.setCurrentRow(-1)
         self.cb_indicator.blockSignals(False)
+        # Menus cumul/échéances masqués tant qu'aucune variable n'est choisie
+        self._set_interval_timestep_visible(False, False)
+        if getattr(self, "_lst_interval", None) is not None:
+            self._lst_interval.clear()
+        if getattr(self, "_lst_timestep", None) is not None:
+            self._lst_timestep.clear()
         self.cb_indicator.update()
         self.cb_indicator.repaint()
         return len(pairs)
@@ -2186,16 +2248,21 @@ class MeteoleDialog(QDialog):
         self._fetch_horizons()
 
     def _selected_interval(self):
-        it = self._lst_interval.currentItem()
-        if it is None or not self._lst_interval.isVisible():
-            return None
-        return it.data(256)
+        # Ne PAS dépendre de isVisible() : au chargement, l'étape 2 (qui
+        # contient ce menu) est masquée, ce qui renverrait None à tort.
+        # On se base sur le contenu réel du menu.
+        lst = getattr(self, "_lst_interval", None)
+        if lst is None or lst.count() == 0:
+            return None          # variable instantanée : aucun cumul
+        it = lst.currentItem()
+        return it.data(256) if it is not None else None
 
     def _selected_horizon_seconds(self):
         """Liste des échéances sélectionnées (en secondes), ou None si aucune."""
         lst = getattr(self, "_lst_timestep", None)
-        if lst is None or not lst.isVisible():
+        if lst is None or lst.count() == 0:
             return None
+        # Indépendant de la visibilité du widget (voir _selected_interval)
         secs = [it.data(256) for it in lst.selectedItems()
                 if it.data(256) is not None]
         return secs or None
@@ -2262,6 +2329,9 @@ class MeteoleDialog(QDialog):
         appid = self._get_appid()
         if not appid:
             return
+        # Masque le panneau « après chargement » le temps du (re)chargement
+        if getattr(self, "grp_after_load", None) is not None:
+            self.grp_after_load.setVisible(False)
 
         # Détermine si on est en mode AROME-OM outremer
         is_om = self._is_om_territory()
@@ -2307,6 +2377,23 @@ class MeteoleDialog(QDialog):
             if not params.get("indicator"):
                 QMessageBox.warning(self, "Indicateur manquant",
                                     "Veuillez sélectionner un indicateur.")
+                return
+            # Garde de cohérence : éviter de charger avec un état désynchronisé
+            # (modèle changé depuis le listing, ou variable non résolue).
+            if self._listed_model_key != self._metro_model_key():
+                QMessageBox.warning(
+                    self, "Liste à rafraîchir",
+                    "Le modèle a changé depuis le dernier listing.\n\n"
+                    "Cliquez sur « Lister les indicateurs » avant de charger.")
+                return
+            if (not params.get("coverage_id")
+                    and params["indicator"] not in (self._all_indicators or [])):
+                QMessageBox.warning(
+                    self, "Variable à recharger",
+                    "La variable n'est pas reconnue pour ce modèle "
+                    "(liste probablement obsolète).\n\n"
+                    "Recliquez sur « Lister les indicateurs », puis "
+                    "choisissez de nouveau la variable.")
                 return
             terr_label    = AROME_TERRITORIES.get(territory, {}).get("label", "")
             territory_str = (f" [{terr_label}]"
@@ -2364,6 +2451,9 @@ class MeteoleDialog(QDialog):
 
         if layers_by_horizon:
             self._register_horizon_layers(layers_by_horizon)
+            # Repères d'action clairs une fois la couche chargée
+            if getattr(self, "grp_after_load", None) is not None:
+                self.grp_after_load.setVisible(True)
 
         if file_info.get("error"):
             self._log(f"[WARN] Avertissements : {file_info['error']}")

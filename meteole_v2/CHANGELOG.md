@@ -122,18 +122,49 @@
 ## [1.4.1] — 2026-07
 
 ### Améliorations — Précipitations & pas de temps
-- **Sélection de la période de cumul** pour les variables cumulées
-  (précipitations, neige…) : nouveau menu « Période de cumul » peuplé
-  dynamiquement depuis l'API (PT1H, PT3H, P1D…), avec **défaut PT1H** (cumul
-  horaire) au lieu du cumul 24 h imposé jusqu'ici. Résout l'impossibilité
-  d'obtenir des échéances < 24 h sur AROME.
-- **Menu déroulant des échéances** alimenté par les pas de temps réels du
-  coverage : pas horaire pour AROME/ARPEGE, **15 min pour AROME-PI**,
-  **5 min pour PIAF**. Multi-sélection (une couche par échéance).
-- La fenêtre de cumul est inscrite dans le nom de couche (« … — cumul 1 h »).
+- **Sélection de la période de cumul** pour les variables cumulées, peuplée
+  dynamiquement depuis l'API, avec **défaut PT1H** (cumul horaire) au lieu du
+  cumul 24 h imposé. Résout l'impossibilité d'obtenir des échéances < 24 h.
+- **Menu déroulant des échéances** au pas de temps réel du modèle (15 min pour
+  AROME-PI, 5 min pour PIAF, horaire pour AROME/ARPEGE) ; multi-sélection.
+- Aide dynamique expliquant le lien période de cumul ↔ échéance.
+- Fenêtre de cumul inscrite dans le nom de couche (« … — cumul 1 h »).
+- Suppression de la saisie d'horizons en métropole (remplacée par le menu) ;
+  options avancées dépliées par défaut.
 
-### Technique
-- worker : nouvelle tâche `describe_coverage` (lecture des `forecast_horizons`
-  d'un coverage), passage explicite de `interval` et des échéances (en secondes)
-  à `get_coverage()`, helpers `_interval_to_fr` / `_seconds_to_fr`.
-- Le listing des capabilities renvoie désormais `intervals_by_indicator`.
+### Corrections & robustesse
+- Chargement des couches par `coverage_id` (corrige « Indicateur invalide » sur
+  AROME-PI ; garantit la cohérence run/cumul/échéance).
+- Lecture des échéances sans re-télécharger le GetCapabilities (~1,7 Mo pour
+  AROME) → nettement plus rapide.
+- Cache de session des listings : rebasculer entre modèles est instantané.
+- Retry automatique si le GetCapabilities est tronqué (corrige le cas « une
+  seule variable affichée ») ; résultat partiel non mis en cache.
+- Variables PIAF/AROME-PI (intensité, précip. solides/convectives) désormais
+  incluses dans le filtre ; filet de sécurité si aucune variable « significative ».
+- Retour systématique au modèle AROME à l'ouverture / au retour à l'étape 1 ;
+  résolution de modèle robuste (AROME-PI / AROME-PE ne sont plus confondus).
+- Message explicite en cas d'erreur d'abonnement (900908).
+
+## [1.4.2] — 2026-07
+
+### Ergonomie
+- Après un chargement, un panneau propose des actions claires : « Modèle / variable » (retour étape 2) et « Recommencer » (retour étape 1), pour enchaîner sans manipulations hasardeuses.
+- En-têtes d'étapes cliquables mis en évidence (curseur main, infobulle) ; étape 2 renommée « Modèle & variable ».
+
+### Corrections — stabilité de la sélection
+- **PIAF nettement plus rapide** : le garde-fou anti-troncature se basait sur le nombre d'indicateurs (< 3) et se déclenchait à tort pour PIAF, qui n'a qu'une seule variable, provoquant deux re-téléchargements inutiles à chaque listing. Il se base désormais sur le nombre de lignes brutes ; PIAF se liste en un seul appel.
+- **Run expiré (PIAF/AROME-PI)** : ces modèles se rafraîchissant toutes les 15 min, le coverage capté au listing pouvait ne plus exister au chargement (« NoSuchCoverage »). Le dernier run est désormais ré-résolu automatiquement en cas d'expiration, de façon transparente.
+- **Ensemble (AROME-PE)** : le paramètre `ensemble_numbers` n'est plus transmis qu'au modèle AROME-PE (ENSEMBLE). Les modèles déterministes (AROME, AROME-PI, ARPEGE, PIAF) ne le reçoivent plus, ce qui évite tout risque de données dupliquées ou d'erreur de fusion. Nombre de membres borné (1 à 25).
+- **Emprise du canevas hors domaine** : si l'emprise (canevas ou couche) débordait du domaine du modèle (par exemple au sud de 37,5°N pour AROME), le chargement échouait (« latitude out of bounds »). L'emprise est désormais rognée automatiquement au domaine du modèle.
+- **Multi-échéances corrigé** : sélectionner plusieurs pas de temps ne produisait qu'un seul raster. La lecture de la sélection (cumul et échéances) dépendait de la visibilité du widget, or l'étape 2 est masquée au moment du chargement (on est sur l'étape 3) : les choix étaient donc ignorés et l'API retombait sur un seul horizon par défaut. La lecture ne dépend plus de la visibilité ; une couche par échéance sélectionnée est de nouveau produite, et le cumul choisi est bien appliqué.
+- Correction d'une désynchronisation : après un listing ou un rechargement, la
+  première variable était « sélectionnée » sans que les menus Période de cumul
+  et Échéances ne se mettent à jour (le handler ne se déclenchait pas). Résultat,
+  le plugin semblait « s'emmêler les pinceaux » quand on changeait de paramètre.
+  Désormais aucune variable n'est présélectionnée : l'utilisateur choisit, ce qui
+  synchronise proprement les menus.
+- Garde de cohérence au chargement : si le modèle a changé depuis le dernier
+  listing, ou si la variable n'est plus reconnue, un message invite à recliquer
+  sur « Lister les indicateurs » au lieu de charger avec un état incohérent.
+- Réinitialisation systématique des menus cumul/échéances à chaque (re)listing.
